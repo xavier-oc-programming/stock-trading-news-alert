@@ -1,6 +1,6 @@
 # Stock Trading News Alert
 
-Monitors a stock's daily price change and sends SMS alerts with top news articles via Twilio when a threshold is crossed.
+Monitors a stock's daily price change and sends WhatsApp alerts with top news articles via Twilio when a threshold is crossed.
 
 ---
 
@@ -41,13 +41,14 @@ python advanced/main.py
 |---------|----------|----------|
 | Alpha Vantage stock fetch | Yes | Yes |
 | NewsAPI top 3 articles | Yes | Yes |
-| Twilio SMS per article | Yes | Yes |
-| Configurable threshold | Hardcoded `THRESHOLD_PCT = 0` | `config.py` — default 5% |
-| UCS-2 SMS truncation | Yes (`clamp_ucs2`) | Yes (`SmsSender.clamp_ucs2`) |
+| Twilio message per article | SMS | WhatsApp |
+| Configurable threshold | Hardcoded `THRESHOLD_PCT = 0` | `config.py` — default 1% |
+| Message truncation | UCS-2 65-char (`clamp_ucs2`) | 300-char (`SmsSender.clamp_ucs2`) |
 | Local daily quota guard | Yes (inline functions) | Yes (`SmsSender`) |
 | Alpha Vantage error detection | Yes | Yes |
 | Object-oriented design | No | Yes — `StockClient`, `NewsClient`, `SmsSender` |
 | Centralised config | No | Yes — `advanced/config.py` |
+| Channel switch (SMS ↔ WhatsApp) | No | `CHANNEL` in `config.py` |
 | Persistent quota file | `original/.sms_quota.json` | `advanced/data/sms_quota.json` |
 | GitHub Actions (daily schedule) | No | Yes |
 
@@ -71,7 +72,7 @@ python advanced/main.py
 
 **Example terminal output (advanced):**
 ```
-[SmsSender] Auth OK — from +15204927666 to +34665151440
+[SmsSender] Auth OK — from whatsapp:+14155238886 to whatsapp:+34665151440
 [StockClient] TSLA — 2025-09-19: $248.23  |  2025-09-18: $235.72
 [StockClient] Change: +5.31%  ($12.51)
 Significant move detected (+5.31%) — fetching news…
@@ -80,8 +81,8 @@ Significant move detected (+5.31%) — fetching news…
 Title: Tesla Surges After Robotaxi Reveal — Analysts Raise Targets
 Brief: Shares jumped over 5% on Thursday following Elon Musk's presentation...
 
---- SMS Preview ---
-TSLA: 🔺5.31% | Tesla Surges After Robotaxi Reveal — Ana…
+--- Message Preview ---
+TSLA: 🔺5.31% | Tesla Surges After Robotaxi Reveal — Analysts Raise Targets - Shares jumped over 5%...
 [SmsSender] Sent SID: SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
@@ -111,8 +112,8 @@ Fetch — NewsClient
 
 Output — SmsSender (per article, up to 3)
   └── Check quota: advanced/data/sms_quota.json (daily count)
-  └── Build SMS body: "TSLA: 🔺5.31% | {title} - {brief}" (truncated to 65 chars)
-  └── POST to Twilio Messages API
+  └── Build message body: "TSLA: 🔺5.31% | {title} - {brief}" (truncated to 300 chars for WhatsApp)
+  └── POST to Twilio Messages API (whatsapp: prefixed numbers)
   └── Update quota file
   └── Returns: Twilio SID or None (quota exhausted)
 ```
@@ -129,17 +130,19 @@ Output — SmsSender (per article, up to 3)
 
 **Top 3 news articles.** When the threshold is crossed, queries NewsAPI for the three most recent articles mentioning the company name or ticker symbol.
 
-**Per-article SMS.** Sends one Twilio SMS per article with a formatted header (`TSLA: 🔺5.31% | headline - brief`) truncated to fit a single UCS-2 SMS segment (~65 characters safe).
+**Per-article message.** Sends one Twilio message per article with a formatted header (`TSLA: 🔺5.31% | headline - brief`). The original build sends SMS (truncated to 65 UCS-2 safe characters); the advanced build sends WhatsApp (truncated to 300 characters).
 
 **Alpha Vantage error detection.** Detects rate-limit and quota responses (`Note`, `Information` keys) and raises a descriptive error rather than silently failing.
 
-**Local daily quota guard.** Tracks the number of SMS messages sent today in a local JSON file. Stops sending once the daily cap is reached, preventing Twilio trial account overages across multiple script invocations in the same day.
+**Local daily quota guard.** Tracks the number of messages sent today in a local JSON file. Stops sending once the daily cap is reached, preventing Twilio trial account overages across multiple script invocations in the same day.
 
 **Advanced build only**
 
 **Configurable threshold via config.py.** All constants — URLs, thresholds, limits, paths — live in a single file. No magic numbers anywhere else.
 
 **OOP module separation.** `StockClient`, `NewsClient`, and `SmsSender` each own exactly one concern. They can be tested and swapped independently.
+
+**Channel switch.** Set `CHANNEL = "sms"` or `CHANNEL = "whatsapp"` in `config.py` to toggle between delivery methods. `main.py` picks the right env vars and char limit automatically.
 
 **GitHub Actions daily schedule.** Runs automatically at 06:00 UTC on weekdays (07:00 CET winter). Includes `workflow_dispatch` for manual runs.
 
@@ -170,7 +173,7 @@ python menu.py
 ```
 START
   │
-  ├─ Load .env → require all 6 env vars → RuntimeError if any missing
+  ├─ Load .env → require env vars (6 for SMS, 6 for WhatsApp) → RuntimeError if any missing
   │
   ├─ SmsSender.verify_auth()
   │     └─ Twilio API reachable? → No → TwilioRestException → abort
@@ -181,14 +184,14 @@ START
   │     └─ Returns (perc_diff, abs_diff)
   │
   ├─ abs(perc_diff) < THRESHOLD_PCT?
-  │     └─ Yes → print "below threshold" → EXIT (no SMS)
+  │     └─ Yes → print "below threshold" → EXIT (no message)
   │
   ├─ NewsClient.get_top_articles()
   │     └─ HTTP error? → requests.HTTPError → abort
   │     └─ Returns list (may be empty)
   │
   ├─ articles empty?
-  │     └─ Yes → send one "No recent articles" SMS → EXIT
+  │     └─ Yes → send one "No recent articles" message → EXIT
   │
   └─ For each article (up to 3):
         ├─ SmsSender.can_send() == False? → print "quota exhausted" → BREAK
@@ -254,13 +257,13 @@ stock-trading-news-alert/
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `__init__(account_sid, auth_token, from_number, to_number, quota_file, max_per_day)` | `None` | Initialises Twilio client and quota parameters. |
+| `__init__(account_sid, auth_token, from_number, to_number, quota_file, max_per_day)` | `None` | Initialises Twilio client and quota parameters. Pass `whatsapp:`-prefixed numbers for WhatsApp delivery. |
 | `verify_auth()` | `None` | Performs a lightweight Twilio account fetch. Raises `TwilioRestException` if credentials are invalid. |
 | `can_send()` | `bool` | Returns `True` if the daily send count is below `max_per_day`. Resets count at midnight. |
-| `send(body)` | `str \| None` | Sends `body` as an SMS. Returns Twilio SID on success, `None` if quota exhausted. Raises `TwilioRestException` on send failure. |
+| `send(body)` | `str \| None` | Sends `body` via Twilio. Channel (SMS or WhatsApp) is determined by the `from_`/`to` format passed at construction. Returns Twilio SID on success, `None` if quota exhausted. Raises `TwilioRestException` on send failure. |
 | `sanitize(text)` *(static)* | `str` | Strips newlines and leading/trailing whitespace. |
 | `clamp_ucs2(text, limit)` *(static)* | `str` | Truncates to `limit` characters and appends `…` if over limit. |
-| `build_body(stock, emoji, perc, title, brief, limit)` *(classmethod)* | `str` | Builds the formatted SMS body: `"TSLA: 🔺5.31% | title - brief"`, clamped to `limit`. |
+| `build_body(stock, emoji, perc, title, brief, limit)` *(classmethod)* | `str` | Builds the formatted message body: `"TSLA: 🔺5.31% | title - brief"`, clamped to `limit`. |
 
 ---
 
@@ -274,13 +277,15 @@ All constants live in `advanced/config.py`.
 | `COMPANY_NAME` | `"Tesla Inc"` | Company name used in NewsAPI query |
 | `STOCK_ENDPOINT` | Alpha Vantage URL | Base URL for stock price API |
 | `NEWS_ENDPOINT` | NewsAPI URL | Base URL for news API |
-| `THRESHOLD_PCT` | `5.0` | Minimum absolute % move to trigger an alert |
+| `THRESHOLD_PCT` | `1.0` | Minimum absolute % move to trigger an alert |
 | `MAX_SMS_PER_DAY` | `8` | Daily send cap (Twilio trial accounts are capped at ~9) |
 | `NEWS_PAGE_SIZE` | `3` | Number of articles to fetch and send |
 | `FETCH_TIMEOUT` | `20` | HTTP request timeout in seconds |
-| `SMS_CHAR_LIMIT` | `65` | Maximum characters per SMS body (UCS-2 safe) |
+| `CHANNEL` | `"whatsapp"` | Delivery channel — `"sms"` or `"whatsapp"` |
+| `SMS_CHAR_LIMIT` | `65` | Max characters per body when `CHANNEL = "sms"` (UCS-2 safe) |
+| `WA_CHAR_LIMIT` | `300` | Max characters per body when `CHANNEL = "whatsapp"` |
 | `DATA_DIR` | `advanced/data/` | Directory for runtime-persisted files |
-| `QUOTA_FILE` | `advanced/data/sms_quota.json` | Daily SMS count tracker |
+| `QUOTA_FILE` | `advanced/data/sms_quota.json` | Daily message count tracker |
 
 ---
 
@@ -317,15 +322,21 @@ All constants live in `advanced/config.py`.
 ```
 
 `date`: ISO 8601 date string (`YYYY-MM-DD`). Resets count to 0 when today's date differs.  
-`count`: number of SMS messages sent today.
+`count`: number of messages sent today (SMS or WhatsApp — same counter).
 
-### SMS body format
+### Message body format
 
+**WhatsApp** (`CHANNEL = "whatsapp"`, max 300 chars):
+```
+TSLA: 🔺5.31% | Tesla Surges After Robotaxi Reveal — Analysts Raise Targets - Shares jumped over 5% on Thursday...
+```
+
+**SMS** (`CHANNEL = "sms"`, max 65 chars, UCS-2 safe):
 ```
 TSLA: 🔺5.31% | Tesla Surges After Robotaxi Reveal — Ana…
 ```
 
-Max 65 characters. Trailing `…` added when truncated.
+Trailing `…` added when truncated.
 
 ---
 
@@ -339,8 +350,10 @@ Copy `.env.example` to `.env` and fill in values before running.
 | `NEWS_API_KEY` | Yes | NewsAPI key — free tier at newsapi.org |
 | `TWILIO_ACCOUNT_SID` | Yes | Twilio Account SID (starts with `AC`) |
 | `TWILIO_AUTH_TOKEN` | Yes | Twilio Auth Token |
-| `TWILIO_FROM` | Yes | Twilio phone number to send from (E.164 format, e.g. `+15204927666`) |
-| `TWILIO_TO` | Yes | Destination phone number (E.164 format) |
+| `TWILIO_WHATSAPP_FROM` | When `CHANNEL = "whatsapp"` | Twilio WhatsApp sandbox number (e.g. `whatsapp:+14155238886`) |
+| `TWILIO_WHATSAPP_TO` | When `CHANNEL = "whatsapp"` | Your WhatsApp number with prefix (e.g. `whatsapp:+34665151440`) |
+| `TWILIO_FROM` | When `CHANNEL = "sms"` | Twilio SMS number (E.164, e.g. `+15204927666`) |
+| `TWILIO_TO` | When `CHANNEL = "sms"` | Destination SMS number (E.164) |
 
 ---
 
@@ -372,6 +385,8 @@ Copy `.env.example` to `.env` and fill in values before running.
 
 **`verify_auth()` called before hitting stock/news APIs.** A Twilio credential failure would otherwise only surface at the end of the script — after spending two API quota calls. Verifying Twilio first fails fast with a clear error.
 
+**WhatsApp over SMS for the advanced build.** Twilio trial accounts restrict SMS to a verified number tied to the account; the WhatsApp sandbox number (`whatsapp:+14155238886`) works globally across all trial accounts. Setting `CHANNEL = "whatsapp"` in `config.py` and using `TWILIO_WHATSAPP_FROM`/`TWILIO_WHATSAPP_TO` sidesteps trial SMS restrictions entirely. Switching back to SMS is a one-line change.
+
 ---
 
 ## 13. Course context
@@ -380,10 +395,10 @@ Built as Day 36 of [100 Days of Code](https://www.udemy.com/course/100-days-of-c
 
 **Concepts covered in the original build:**
 - REST API consumption with `requests` (GET with query parameters, JSON parsing)
-- Chained API calls (stock price → conditionally fetch news → send SMS)
+- Chained API calls (stock price → conditionally fetch news → send message)
 - Environment variable management with `python-dotenv`
 - Conditional logic based on computed data (percentage threshold)
-- String manipulation and truncation for SMS length constraints
+- String manipulation and truncation for message length constraints
 - Twilio SMS API integration
 
 **The advanced build extends into:**
@@ -402,7 +417,7 @@ See [docs/COURSE_NOTES.md](docs/COURSE_NOTES.md) for the full concept breakdown 
 | Module | Used in | Purpose |
 |--------|---------|---------|
 | `requests` | `stock_client.py`, `news_client.py`, `original/main.py` | HTTP requests to Alpha Vantage and NewsAPI |
-| `twilio` | `sms_sender.py`, `original/main.py` | Twilio REST API client for SMS sending |
+| `twilio` | `sms_sender.py`, `original/main.py` | Twilio REST API client for SMS and WhatsApp sending |
 | `python-dotenv` | `advanced/main.py`, `original/main.py` | Loads `.env` into environment variables |
 | `json` | `sms_sender.py`, `original/main.py` | Read/write quota state file |
 | `pathlib` | All modules | Platform-safe file path construction |
