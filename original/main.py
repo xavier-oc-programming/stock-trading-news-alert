@@ -8,8 +8,8 @@ import requests
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 
-# --------- Load .env robustly (from this file's directory) ---------
-dotenv_path = Path(__file__).with_name(".env")
+# --------- Load .env robustly (from repo root) ---------
+dotenv_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=dotenv_path)
 
 # --------- Constants ---------
@@ -38,7 +38,7 @@ client.api.accounts(ACCOUNT_SID).fetch()
 print("Twilio auth OK. From:", FROM_NUMBER, "To:", TO_NUMBER)
 
 # --------- Local quota guard ---------
-QUOTA_FILE = Path(".sms_quota.json")
+QUOTA_FILE = Path(__file__).parent / ".sms_quota.json"  # fixed: was Path(".sms_quota.json")
 MAX_PER_DAY = 8  # stay below Twilio trial daily cap (you saw 9)
 
 def _load_quota():

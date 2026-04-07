@@ -1,0 +1,7 @@
+# Python 3.10+ required (match-statement not used, but | union type hints are)
+requests>=2.31.0
+twilio>=9.0.0
+python-dotenv>=1.0.0
+
+# newsapi-python is NOT used — the News API is called directly via requests.
+# No additional packages needed for Alpha Vantage (plain REST, no SDK).

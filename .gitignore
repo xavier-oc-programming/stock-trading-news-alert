@@ -9,6 +9,4 @@ old_files/
 
 # Runtime quota state
 .sms_quota.json
-advanced/data/
-!advanced/data/.gitkeep
-!advanced/data/example.json
+advanced/data/sms_quota.json
