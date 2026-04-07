@@ -12,8 +12,8 @@ from config import (
     STOCK_ENDPOINT, NEWS_ENDPOINT,
     THRESHOLD_PCT, MAX_SMS_PER_DAY,
     NEWS_PAGE_SIZE, FETCH_TIMEOUT,
-    SMS_CHAR_LIMIT, QUOTA_FILE,
-    direction_emoji,
+    SMS_CHAR_LIMIT, WA_CHAR_LIMIT, QUOTA_FILE,
+    CHANNEL, direction_emoji,
 )
 from stock_client import StockClient
 from news_client import NewsClient
@@ -33,8 +33,14 @@ def main() -> None:
     news_key    = require_env("NEWS_API_KEY")
     account_sid = require_env("TWILIO_ACCOUNT_SID")
     auth_token  = require_env("TWILIO_AUTH_TOKEN")
-    from_number = require_env("TWILIO_FROM")
-    to_number   = require_env("TWILIO_TO")
+    if CHANNEL == "whatsapp":
+        from_number = require_env("TWILIO_WHATSAPP_FROM")
+        to_number   = require_env("TWILIO_WHATSAPP_TO")
+        char_limit  = WA_CHAR_LIMIT
+    else:
+        from_number = require_env("TWILIO_FROM")
+        to_number   = require_env("TWILIO_TO")
+        char_limit  = SMS_CHAR_LIMIT
 
     # Instantiate modules
     stock  = StockClient(alpha_key, STOCK_ENDPOINT, STOCK_NAME, FETCH_TIMEOUT)
@@ -58,8 +64,8 @@ def main() -> None:
 
     if not articles:
         body = sender.build_body(STOCK_NAME, emoji, perc_diff,
-                                 "No recent articles", "", SMS_CHAR_LIMIT)
-        print(f"\n--- SMS Preview ---\n{body}")
+                                 "No recent articles", "", char_limit)
+        print(f"\n--- Message Preview ---\n{body}")
         sender.send(body)
         return
 
@@ -67,9 +73,9 @@ def main() -> None:
         title = article.get("title", "(No Title)")
         brief = article.get("description") or ""
         body  = sender.build_body(STOCK_NAME, emoji, perc_diff,
-                                  title, brief, SMS_CHAR_LIMIT)
+                                  title, brief, char_limit)
         print(f"\nTitle: {title}\nBrief: {brief}")
-        print(f"\n--- SMS Preview ---\n{body}")
+        print(f"\n--- Message Preview ---\n{body}")
         sid = sender.send(body)
         if sid is None:
             print("Quota exhausted — stopping early.")
